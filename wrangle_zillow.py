@@ -112,6 +112,7 @@ def fill_nulls(df):
     # architecturalstyledesc, storydesc, typeconstructiondesc
 
     # replace NaN with zeros
+    #df['pools'] = df.pools.replace({np.NAN:0})
     df.basementsqft = df.basementsqft.fillna(0)
     df.fireplacecnt = df.fireplacecnt.fillna(0)
     df.fullbathcnt = df.fullbathcnt.fillna(0)
@@ -125,11 +126,12 @@ def fill_nulls(df):
     df.unitcnt = df.unitcnt.fillna(0)
     df.heatingorsystemdesc = df.heatingorsystemdesc.fillna('None') # check if it is ok
 
+
     df.rename(columns={
             'calculatedfinishedsquarefeet':'sqft',
             'bathroomcnt':'bath',
             'bedroomcnt':'beds',
-            'fireplacecnt':'fireplace', 
+            'fireplacecnt':'fireplace',
             'fullbathcnt':'fullbath',
             'garagecarcnt':'garage',
             'garagetotalsqft':'garage_sqft',
@@ -150,8 +152,9 @@ def fill_nulls(df):
             }, inplace=True)
 
     # too many  or 1 categorical unique values or identical to other columns
-    df.drop(columns=['calculatedbathnbr', 'basementsqft', 'finishedsquarefeet12', 
-                    'rawcensustractandblock', 'regionidcity', 'regionidcounty', 'regionidneighborhood', 
+    df.drop(columns=['calculatedbathnbr', 'basementsqft', 'finishedsquarefeet12',
+                    'rawcensustractandblock', 'regionidcity', 
+                    'regionidcounty', 'regionidneighborhood', 'roomcnt',
                     'censustractandblock', 'assessmentyear', 'transactiondate',
                     'regionidzip', 'propertylandusedesc'], 
             inplace=True)
@@ -185,6 +188,10 @@ def handle_outliers(df):
     df = df[df.sqft >= 300]
     df = df[df.bath != 0]
     df = df[df.beds != 0]
+    # target variable
+    q1 = df.logerror.quantile(0.01)
+    q3 = df.logerror.quantile(0.99)
+    df = df[(df.logerror > q1) & (df.logerror < q3)] # removes 1034 rows
     return df
 
 def transform_columns(df):
@@ -193,15 +200,62 @@ def transform_columns(df):
     for col in df.iloc[:, :-3].columns:
         if df[col].dtype != 'object':
             df[col] = df[col].astype(int)
+    # remove bath where bath != fullbath
+    df = df[df.bath == df.fullbath] # removes 94 rows
+    # drop fullbath as identical
+    df.drop(columns='fullbath', inplace=True)
     # create a list of numerical columns
-    numerical_columns = ['sqft', 'garage_sqft', 'latitude', 'longitude', 'lot_sqft', 'year_built',
-                    'structure_price', 'price', 'land_price', 'tax_amount', 'logerror']
+    numerical_columns = ['sqft', 'garage_sqft', 'latitude', 'longitude', 
+                    'lot_sqft', 'year_built',
+                    'structure_price', 'price', 'land_price', 
+                    'tax_amount', 'logerror']
     # change not numerical columns to categories
     for col in df.columns:
         if col not in numerical_columns:
             df[col] = pd.Categorical(df[col])
     
     return df
+
+def transform_columns2(df):
+    
+    # change floats to ints
+    for col in df.iloc[:, :-3].columns:
+        if df[col].dtype != 'object':
+            df[col] = df[col].astype(int)
+    # remove bath where bath != fullbath
+    df = df[df.bath == df.fullbath] # removes 94 rows
+    # drop fullbath as identical
+    df.drop(columns='fullbath', inplace=True)
+    # create a list of numerical columns
+    numerical_columns = ['sqft', 'garage_sqft', 'latitude', 'longitude', 
+                    'lot_sqft', 'year_built',
+                    'structure_price', 'price', 'land_price', 
+                    'tax_amount', 'logerror']
+    # change not numerical columns to categories
+    for col in df.columns:
+        if col not in numerical_columns:
+            if col in ['heating_system', 'county_land_code', 'fips']:
+                df[col] = pd.Categorical(df[col])
+            else:
+                df[col] = df[col].astype('uint8')
+    
+    return df
+
+def engineering(df):
+    df['age'] = 2017 - df.year_built
+    
+    # add a new column with county names
+    df['county_name'] = np.select([(df.fips == 6037), (df.fips == 6059), (df.fips == 6111)],
+                             ['LA', 'Orange', 'Ventura'])
+    df.drop(columns=['year_built', 'fips'], inplace=True)
+    # column to category data type
+   
+    new_order_cols = ['sqft',  'garage_sqft', 'lot_sqft', 'age', 
+        'structure_price', 'price','land_price', 'tax_amount', 
+        'latitude', 'longitude',
+        'bath', 'beds', 'fireplace', 'garage', 'hottub_spa', 'pool', 
+        'unit', 'heating_system','county_land_code', 'county_name', 'logerror']
+    return df[new_order_cols]
 
 ######## get_zillow ready for exploration ######
 
@@ -212,11 +266,63 @@ def get_zillow():
     drop_nulls(df)
     df = handle_outliers(df)
     df = transform_columns(df)
+    df = engineering(df)
 
     filename = 'clean_zillow.csv'
     df.to_csv(filename, index_label = False)
-    
+
     return df
+
+def get_zillow2():
+    df = acquire_zillow()
+    clean_from_ids(df)
+    fill_nulls(df)
+    drop_nulls(df)
+    df = handle_outliers(df)
+    df = transform_columns2(df)
+    df = engineering(df)
+
+    filename = 'clean_zillow.csv'
+    df.to_csv(filename, index_label = False)
+
+    return df
+
+
+############### SPLIT FUCNTIONS ########
+def split_zillow(df):
+    '''
+    This function takes in a dataframe and splits it into 3 data sets
+    Test is 20% of the original dataset, validate is .30*.80= 24% of the 
+    original dataset, and train is .70*.80= 56% of the original dataset. 
+    The function returns, in this order, train, validate and test dataframes. 
+    '''
+    #split_db class verision with random seed
+    train_validate, test = train_test_split(df, test_size=0.2, 
+                                            random_state=seed)
+    train, validate = train_test_split(train_validate, test_size=0.3, 
+                                       random_state=seed)
+    return train, validate, test
+
+def full_split3_zillow(train, validate, test, target):
+    '''
+    accepts train, validate, test data sets and the name of the target variable as a parameter
+    splits the data frame into:
+    X_train, X_validate, X_test, y_train, y_validate, y_test
+    '''
+    #train, validate, test = train_validate_test_split(df, target)
+
+    #save target column
+    y_train = train[target]
+    y_validate = validate[target]
+    y_test = test[target]
+
+    #remove target column from the sets
+    train.drop(columns = target, inplace=True)
+    validate.drop(columns = target, inplace=True)
+    test.drop(columns = target, inplace=True)
+
+    return train, validate, test, y_train, y_validate, y_test
+
 
 
 ############ printing functions ###########

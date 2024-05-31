@@ -86,6 +86,7 @@ def clean_from_ids(df):
     the function accepts a dataframe as a parameter
     goes through all columns and removes the ones 
     that end with id
+    total: 14 rows with ids were removed
     '''
     #df.drop(columns=['id', 'parcelid'], inplace=True)
     
@@ -96,8 +97,8 @@ def clean_from_ids(df):
     # based on value_counts() i would keep buildingqualitytypeid and heatingorsystemtypeid
 
     # rename those columns to remove id from their name
-    df.rename(columns={'buildingqualitytypeid':'building_quality_type', 
-                'heatingorsystemtypeid':'heating_system_type'}, inplace=True)
+   # df.rename(columns={'buildingqualitytypeid':'building_quality_type', 
+               # 'heatingorsystemtypeid':'heating_system_type'}, inplace=True)
     # remove columns that are  different ids
     columns = []
     for col in df.columns.tolist():
@@ -106,14 +107,27 @@ def clean_from_ids(df):
     df.drop(columns=columns, inplace=True)
 
 def fill_nulls(df):
+    '''
+    this function accept a zillow data frame as a parameter
+    makes the following changes to the columns:
+    - fills null values with 0 for the columns where it is reasonable
+    - renames columns to human readable format
+    - removes columns where too many null values, replacing is not logical, 
+        too many or only one categorical variable(s), 
+        columns that are identical to other columns
+    in total:
+        - in 10 columns null values were replaced with 0
+        - 13 columns were dropped
+    '''
     # potentially to be dropped because of the high # of NaN values:
+    # those columns I don't fill with nulls
     # finishedfloor1squarefeet, finishedsquarefeet50, finishedsquarefeet6, poolsizesum, propertyzoningdesc
     # yardbuildingsqft17, yardbuildingsqft26, fireplaceflag, taxdelinquencyflag, airconditioningdesc
     # architecturalstyledesc, storydesc, typeconstructiondesc
 
     # replace NaN with zeros
     #df['pools'] = df.pools.replace({np.NAN:0})
-    df.basementsqft = df.basementsqft.fillna(0)
+    #df.basementsqft = df.basementsqft.fillna(0) has 52K+ null values
     df.fireplacecnt = df.fireplacecnt.fillna(0)
     df.fullbathcnt = df.fullbathcnt.fillna(0)
     df.garagecarcnt = df.garagecarcnt.fillna(0)
@@ -124,7 +138,7 @@ def fill_nulls(df):
     df.pooltypeid2 = df.pooltypeid2.fillna(0)
     df.pooltypeid7 = df.pooltypeid7.fillna(0)
     df.unitcnt = df.unitcnt.fillna(0)
-    df.heatingorsystemdesc = df.heatingorsystemdesc.fillna('None') # check if it is ok
+    #df.heatingorsystemdesc = df.heatingorsystemdesc.fillna('None') # check if it is ok
 
 
     df.rename(columns={
@@ -142,6 +156,7 @@ def fill_nulls(df):
             'pooltypeid2':'pool_2',
             'pooltypeid7':'pool_7',
             'propertycountylandusecode':'county_land_code',
+            'regionidcity':'city_id',
             'regionidzip':'zip',
             'unitcnt':'unit',
             'yearbuilt':'year_built',
@@ -149,21 +164,30 @@ def fill_nulls(df):
             'taxvaluedollarcnt':'price',
             'landtaxvaluedollarcnt':'land_price',
             'taxamount':'tax_amount',
-            'heatingorsystemdesc':'heating_system'
             }, inplace=True)
 
     # too many  or 1 categorical unique values or identical to other columns
     df.drop(columns=['calculatedbathnbr', 'basementsqft', 'finishedsquarefeet12',
-                    'rawcensustractandblock', 'regionidcity', 
+                    'rawcensustractandblock', 
                     'regionidcounty', 'regionidneighborhood', 'roomcnt',
                     'censustractandblock', 'assessmentyear', 'transactiondate',
-                    'propertylandusedesc'], 
+                    'propertylandusedesc', 'heatingorsystemdesc'], 
             inplace=True)
+    # drop fullbath as almost identical to bathcount
+    df.drop(columns='fullbath', inplace=True)
 
 
 #Define function to drop columns/rows based on proportion of nulls
 def drop_nulls(df, prop_required_column=0.75, prop_required_row=0.75):
-
+    '''
+    - the function accepts a zillo data frame,
+    percentage of min values in columns and rows 
+    - drops duplicates
+    - drops columns pool_10, pool_2, pool_7
+    - drops all columns and rows where the number of nulls is way too big
+    - drops other nulls
+    in total drops: 19 columns and 1521 rows
+    '''
     df.drop_duplicates(inplace=True)
     
     # assign 1 to pools where pool_10=1 and pool=0
@@ -184,15 +208,34 @@ def drop_nulls(df, prop_required_column=0.75, prop_required_row=0.75):
     
     df.dropna(axis=0, thresh=row_threshold, inplace=True)
     df.dropna(axis=0, inplace=True)
+    
 
 def handle_outliers(df):
-    df = df[df.sqft >= 300]
+    '''
+    the function accepts a zillow data frame as a parameter
+    returns a data frame without some outliers
+    in total removes 1208 rows
+    '''
+    # zip code out of max range
+    df = df[df.zip <= 99950]
+    # remove bedrooms and bathrooms > 0 and < 7
     df = df[df.bath != 0]
     df = df[df.beds != 0]
+    df = df[df.beds < 7]
+    df = df[df.bath < 7]
+    # remove sq feet below 300 and above 6_000
+    df = df[df.sqft >= 300]
+    df = df[df.sqft <= 6_000]
+
     # target variable
-    q1 = df.logerror.quantile(0.01)
-    q3 = df.logerror.quantile(0.99)
+    # removes logerror < -0.55 and > 0.55
+    q1 = - 0.55
+    q3 = 0.55
+    #q1 = df.logerror.quantile(0.01)
+    #q3 = df.logerror.quantile(0.99)
     df = df[(df.logerror > q1) & (df.logerror < q3)] # removes 1034 rows
+
+
     return df
 
 def transform_columns(df):
@@ -218,24 +261,29 @@ def transform_columns(df):
     return df
 
 def transform_columns2(df):
+    '''
+    the function accept zillow data frame as a parameter
+    transforms:
+    --> most of floats (exc tax amout and logerror) into integer
+    --> columns with small numerical values - to 'uint8' data type
+    --> county_land_code and fips to categories
+    returns a data frame with transformed values
+    '''
     
     # change floats to ints
-    for col in df.iloc[:, :-3].columns:
+    for col in df.iloc[:, :-2].columns:
         if df[col].dtype != 'object':
             df[col] = df[col].astype(int)
-    # remove bath where bath != fullbath
-    df = df[df.bath == df.fullbath] # removes 94 rows
-    # drop fullbath as identical
-    df.drop(columns='fullbath', inplace=True)
+
     # create a list of numerical columns
     numerical_columns = ['sqft', 'garage_sqft', 'latitude', 'longitude', 
-                    'lot_sqft', 'year_built', 'zip',
+                    'lot_sqft', 'year_built', 'city_id', 'zip',
                     'structure_price', 'price', 'land_price', 
                     'tax_amount', 'logerror']
     # change not numerical columns to categories
     for col in df.columns:
         if col not in numerical_columns:
-            if col in ['heating_system', 'county_land_code', 'fips']:
+            if col in ['county_land_code', 'fips']:
                 df[col] = pd.Categorical(df[col])
             else:
                 df[col] = df[col].astype('uint8')
@@ -243,7 +291,15 @@ def transform_columns2(df):
     return df
 
 def engineering(df):
+    '''
+    the function accepts zillow data frame as a parameter
+    creates a new column age = 2017 - year_built
+    creates a new column bed_bath_ratio = bed / bath
+    creates a new column count_name based on fips
+    rearranges the order of columns
+    '''
     df['age'] = 2017 - df.year_built
+    df['bed_bath_ratio'] = round(df.beds / df.bath, 2)
     
     # add a new column with county names
     df['county_name'] = np.select([(df.fips == 6037), (df.fips == 6059), (df.fips == 6111)],
@@ -253,9 +309,9 @@ def engineering(df):
    
     new_order_cols = ['sqft',  'garage_sqft', 'lot_sqft', 'age', 
         'structure_price', 'price','land_price', 'tax_amount', 
-        'zip', 'latitude', 'longitude',
+        'bed_bath_ratio', 'city_id', 'zip', 'latitude', 'longitude',
         'bath', 'beds', 'fireplace', 'garage', 'hottub_spa', 'pool', 
-        'unit', 'heating_system','county_land_code', 'county_name', 'logerror']
+        'unit', 'county_land_code', 'county_name', 'logerror']
     return df[new_order_cols]
 
 ######## get_zillow ready for exploration ######
